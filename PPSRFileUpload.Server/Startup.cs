@@ -44,7 +44,7 @@ namespace PPSRFileUpload.API
                 });
             });
             services.AddEntityFrameworkSqlServer().AddDbContextFactory<AppDbContext>((serviceProvider, options) =>
-            options.UseSqlServer("Server=host.docker.internal, 1433;Database=PPSR;User Id=sa;Password=PPSRImport@100;MultipleActiveResultSets=true;TrustServerCertificate=true;")
+            options.UseSqlServer("Server=host.docker.internal, 1433;Database=PPSR;User Id=sa;Password=PPSRImport@100;MultipleActiveResultSets=true;TrustServerCertificate=true;Encrypt=False")
                     .UseInternalServiceProvider(serviceProvider));
             services.AddScoped<IImportService, ImportService>();
             services.AddScoped<IFileRepository, FileRepository>();
