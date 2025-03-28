@@ -8,9 +8,9 @@ services:
       - 8081:8081
       - 8080:8080
     depends_on:
-      - sql_sqlserver
-  sql_sqlserver:
-    container_name: sql_sqlserver
+      - db_sqlserver
+  db_sqlserver:
+    container_name: db_sqlserver
     image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
       - ACCEPT_EULA=Y
