@@ -15,6 +15,8 @@ WORKDIR /src
 COPY ["PPSRFileUpload.Server/PPSRFileUpload.server.csproj", "PPSRFileUpload.Server/"]
 COPY ["PPSRFileUpload.Data/PPSRFileUpload.Data.csproj", "PPSRFileUpload.Data/"]
 RUN dotnet restore "./PPSRFileUpload.Server/PPSRFileUpload.server.csproj"
+RUN sed -i 's/\[openssl_init\]/# [openssl_init]/' /etc/ssl/openssl.cnf
+RUN echo '\n\n[openssl_init]\nssl_conf = ssl_sect\n\n[ssl_sect]\nsystem_default = ssl_default_sect\n\n[ssl_default_sect]\nMinProtocol = TLSv1\nCipherString = DEFAULT@SECLEVEL=0\n' >> /etc/ssl/openssl.cnf
 COPY . .
 WORKDIR "/src/PPSRFileUpload.Server"
 RUN dotnet build "./PPSRFileUpload.server.csproj" -c $BUILD_CONFIGURATION -o /app/build
