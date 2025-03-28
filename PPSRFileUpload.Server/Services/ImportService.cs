@@ -90,109 +90,116 @@ namespace Import.Service
         }
         private async Task<List<ValidationError>> ConvertToEntitieAndSaveAsync(Stream stream, List<ValidationError> entriesInfo, string fileName)
         {
-            List<FileConfig> fileConfigs = new List<FileConfig>();
-            StreamReader sr = new StreamReader(stream);
-
-            bool hasHeaders = string.IsNullOrEmpty(sr.ReadLine());
-            bool hasRow = false;
-            var invalidRowsCount = 0;
-            var submittedRowsCount = 0;
-            var duplicateRowsCount = 0;
-            FileConfig fileConfig;
-            var existingFileConfigs = _fileRepo.GetAllFileConfigAsync();
-
-            while (!sr.EndOfStream)
+            try
             {
-                submittedRowsCount++;
-                
-                string[] rows = Regex.Split(sr.ReadLine(), ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", default, TimeSpan.FromMinutes(1));
-                
-                if (rows != null)
+                List<FileConfig> fileConfigs = new List<FileConfig>();
+                StreamReader sr = new StreamReader(stream);
+
+                bool hasHeaders = string.IsNullOrEmpty(sr.ReadLine());
+                bool hasRow = false;
+                var invalidRowsCount = 0;
+                var submittedRowsCount = 0;
+                var duplicateRowsCount = 0;
+                FileConfig fileConfig;
+                var existingFileConfigs = _fileRepo.GetAllFileConfigAsync();
+
+                while (!sr.EndOfStream)
                 {
-                    if (string.IsNullOrEmpty(rows[0]) || string.IsNullOrEmpty(rows[2]) || string.IsNullOrEmpty(rows[3]) || string.IsNullOrEmpty(rows[6]) || string.IsNullOrEmpty(rows[4]) || string.IsNullOrEmpty(rows[7]))
+                    submittedRowsCount++;
+
+                    string[] rows = Regex.Split(sr.ReadLine(), ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", default, TimeSpan.FromMinutes(1));
+
+                    if (rows != null)
                     {
-                        invalidRowsCount++;                        
+                        if (string.IsNullOrEmpty(rows[0]) || string.IsNullOrEmpty(rows[2]) || string.IsNullOrEmpty(rows[3]) || string.IsNullOrEmpty(rows[6]) || string.IsNullOrEmpty(rows[4]) || string.IsNullOrEmpty(rows[7]))
+                        {
+                            invalidRowsCount++;
+                        }
+                        else
+                        {
+                            fileConfig = new FileConfig();
+                            hasRow = true;
+
+                            fileConfig.FirstName = rows[0];
+                            fileConfig.MiddleName = rows[1];
+                            fileConfig.LastName = rows[2];
+                            fileConfig.Vin = rows[3];
+                            fileConfig.Startdate = DateOnly.FromDateTime(Convert.ToDateTime(rows[4]));
+                            fileConfig.Duration = string.IsNullOrEmpty(rows[5]) ? DurationEnum.NotApplicaple : rows[5] == "7" ? DurationEnum.SevenYears : rows[5] == "25" ? DurationEnum.TewntyFiveyYears : DurationEnum.NotApplicaple;
+                            fileConfig.SpgAcn = rows[6];
+                            fileConfig.SpgOrganization = rows[7];
+                            fileConfigs.Add(fileConfig);
+                        }
                     }
-                    else
-                    {
-                        fileConfig = new FileConfig();
-                        hasRow = true;
+                }
+                if (!hasRow && hasHeaders)
+                {
+                    entriesInfo.Add(new ValidationError { Code = "NODATA", Description = "File do not have proper data" });
+                    return entriesInfo;
+                }
+                entriesInfo.Add(new ValidationError { Code = "SUBMIT", Description = $"Number of submitted records: {submittedRowsCount.ToString()}" });
+                entriesInfo.Add(new ValidationError { Code = "INVALID", Description = $"Number of invalid records: {invalidRowsCount}" });
 
-                        fileConfig.FirstName = rows[0];
-                        fileConfig.MiddleName = rows[1];
-                        fileConfig.LastName = rows[2];
-                        fileConfig.Vin = rows[3];
-                        fileConfig.Startdate = Convert.ToDateTime(rows[4]);
-                        fileConfig.Duration = string.IsNullOrEmpty(rows[5]) ? DurationEnum.NotApplicaple : rows[5] == "7" ? DurationEnum.SevenYears : rows[5] == "25" ? DurationEnum.TewntyFiveyYears : DurationEnum.NotApplicaple;
-                        fileConfig.SpgAcn = rows[6];
-                        fileConfig.SpgOrganization = rows[7];
-                        fileConfigs.Add(fileConfig);
-                    }
-                }      
+                // find update records from CSV file records checking with existing DB records
+                var updateFileConfigs = existingFileConfigs.Where(e => fileConfigs.Any(f => f.FirstName == e.FirstName && f.LastName == e.LastName && f.MiddleName == e.MiddleName && f.Vin == e.Vin && f.SpgAcn == e.SpgAcn)).ToList();
+
+
+                entriesInfo.Add(new ValidationError { Code = "UPDATE", Description = $"Number of updated records: {updateFileConfigs.Count()}" });
+
+
+                // remove update records from CSV file records
+                var newFileConfigs = fileConfigs.Except(updateFileConfigs, new CustomComparer()).ToList();
+
+                var newRecordsCount = newFileConfigs.Count();
+
+                // remove duplicate VIN records from CSV file records with checking with existing DB records -->	Each vehicle can only have one owner
+                newFileConfigs = newFileConfigs.Where(e => !existingFileConfigs.Any(f => f.Vin == e.Vin)).ToList();
+
+                // remove duplicate SPG records from CSV file records with checking with existing DB records
+                newFileConfigs = newFileConfigs.Where(e => !existingFileConfigs.Any(f => f.SpgAcn == e.SpgAcn)).ToList();
+
+                // Find duplicate VIN records from CSV file records 
+                var duplicateRecordsFromFile = newFileConfigs.GroupBy(x => new { x.Vin }).Where(g => g.Count() > 1).Select(y => y.FirstOrDefault()).ToList();
+
+                // remove duplicate records from new records
+                var addFileConfigs = newFileConfigs.Except(duplicateRecordsFromFile, new CustomComparer()).ToList();
+
+                // Find duplicate SPG records from CSV file records
+                duplicateRecordsFromFile = addFileConfigs.GroupBy(x => new { x.SpgAcn }).Where(g => g.Count() > 1).Select(y => y.FirstOrDefault()).ToList();
+
+                // remove SPG duplicate records from new records
+                addFileConfigs = addFileConfigs.Except(duplicateRecordsFromFile, new CustomComparer()).ToList();
+
+                duplicateRowsCount = newRecordsCount - addFileConfigs.Count();
+
+                entriesInfo.Add(new ValidationError { Code = "DUPLICATE", Description = $"Number of duplicated records: {duplicateRowsCount}" });
+
+
+                entriesInfo.Add(new ValidationError { Code = "ADD", Description = $"Number of added records: {addFileConfigs.Count()}" });
+
+                entriesInfo.Add(new ValidationError { Code = "PROCESSED", Description = $"Number of Processed records: {addFileConfigs.Count() + updateFileConfigs.Count()}" });
+
+                if (updateFileConfigs.Any())
+                {
+                    //update If a record with the same grantor, VIN, and SPG already exists
+                    _fileRepo.UpsertFileConfig(false, updateFileConfigs);
+                }
+                if (addFileConfigs.Any())
+                {
+                    _fileRepo.UpsertFileConfig(true, addFileConfigs); // add new records
+                }
+                var importedFiles = new ImportedFiles
+                {
+                    FileName = fileName
+                };
+
+                _fileRepo.AddImportedFileName(importedFiles); // add Imported filenames into DB
+                await _fileRepo.SaveChangesAsync();                
             }
-            if (!hasRow && hasHeaders)
+            catch (Exception ex)
             {
-                entriesInfo.Add(new ValidationError { Code = "NODATA", Description = "File do not have proper data" });
-                return entriesInfo;
+                entriesInfo.Add(new ValidationError { Code = "ERROR", Description = $"Error Occured: {ex}" });
             }
-            entriesInfo.Add(new ValidationError { Code = "SUBMIT", Description = $"Number of submitted records: {submittedRowsCount.ToString()}" });
-            entriesInfo.Add(new ValidationError { Code = "INVALID", Description = $"Number of invalid records: {invalidRowsCount}" });
-
-            // find update records from CSV file records checking with existing DB records
-            var updateFileConfigs = existingFileConfigs.Where(e => fileConfigs.Any(f => f.FirstName == e.FirstName && f.LastName == e.LastName && f.MiddleName == e.MiddleName && f.Vin == e.Vin && f.SpgAcn == e.SpgAcn)).ToList();
-
-            
-           entriesInfo.Add(new ValidationError { Code = "UPDATE", Description = $"Number of updated records: {updateFileConfigs.Count()}" });
-          
-
-            // remove update records from CSV file records
-            var newFileConfigs = fileConfigs.Except(updateFileConfigs, new CustomComparer()).ToList();
-
-            var newRecordsCount = newFileConfigs.Count();
-
-            // remove duplicate VIN records from CSV file records with checking with existing DB records -->	Each vehicle can only have one owner
-            newFileConfigs = newFileConfigs.Where(e => !existingFileConfigs.Any(f => f.Vin == e.Vin)).ToList();
-
-            // remove duplicate SPG records from CSV file records with checking with existing DB records
-            newFileConfigs = newFileConfigs.Where(e => !existingFileConfigs.Any(f => f.SpgAcn == e.SpgAcn)).ToList();
-
-            // Find duplicate VIN records from CSV file records 
-            var duplicateRecordsFromFile = newFileConfigs.GroupBy(x => new {x.Vin}).Where(g => g.Count() > 1).Select(y => y.FirstOrDefault()).ToList();
-
-            // remove duplicate records from new records
-            var addFileConfigs = newFileConfigs.Except(duplicateRecordsFromFile, new CustomComparer()).ToList();
-
-            // Find duplicate SPG records from CSV file records
-            duplicateRecordsFromFile = addFileConfigs.GroupBy(x => new { x.SpgAcn }).Where(g => g.Count() > 1).Select(y => y.FirstOrDefault()).ToList();
-
-            // remove SPG duplicate records from new records
-            addFileConfigs = addFileConfigs.Except(duplicateRecordsFromFile, new CustomComparer()).ToList();
-
-            duplicateRowsCount = newRecordsCount - addFileConfigs.Count();
-
-            entriesInfo.Add(new ValidationError { Code = "DUPLICATE", Description = $"Number of duplicated records: {duplicateRowsCount}" });         
-            
-                
-            entriesInfo.Add(new ValidationError { Code = "ADD", Description = $"Number of added records: {addFileConfigs.Count()}" });
-
-            entriesInfo.Add(new ValidationError { Code = "PROCESSED", Description = $"Number of Processed records: {addFileConfigs.Count() + updateFileConfigs.Count()}" });
-
-            if (updateFileConfigs.Any())
-            {
-                //update If a record with the same grantor, VIN, and SPG already exists
-                _fileRepo.UpsertFileConfig(false, updateFileConfigs); 
-            }
-            if (addFileConfigs.Any())
-            {
-                _fileRepo.UpsertFileConfig(true, addFileConfigs); // add new records
-            }
-            var importedFiles = new ImportedFiles
-            {
-                    FileName = fileName                
-            };
-
-            _fileRepo.AddImportedFileName(importedFiles); // add Imported filenames into DB
-            await _fileRepo.SaveChangesAsync();
             return entriesInfo;
         }
     }

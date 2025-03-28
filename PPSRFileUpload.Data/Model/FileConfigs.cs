@@ -30,7 +30,7 @@ namespace Data.Model
         
         [MaxLength(450)]
         [Required]
-        public DateTime Startdate { get; set; }
+        public DateOnly Startdate { get; set; }
 
         [Required]
         public DurationEnum Duration { get; set; }
